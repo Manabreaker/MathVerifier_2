@@ -1,7 +1,4 @@
-groq_api_key1 = "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"
-groq_api_key2 = "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"
-groq_api_key3 = "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"
-github_token = "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"
+github_token = "YOUR_GITHUB_TOKEN"
 messages = [
         {
             "role": "system",
