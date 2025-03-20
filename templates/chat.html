@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Чат с нейросетью</h2>
+
+<!-- Кнопка настроек -->
+<div class="settings-toggle" id="settings-toggle">
+    <i>⚙️</i>
+</div>
+
+<!-- Панель настроек -->
+<div class="settings-panel" id="settings-panel">
+    <div class="settings-header">
+        <h3>Настройки</h3>
+        <button class="close-settings" id="close-settings">&times;</button>
+    </div>
+    
+    <div class="settings-group">
+        <h4>Модель</h4>
+        <div class="setting-item">
+            <label for="model-select">Выберите модель:</label>
+            <select id="model-select">
+                <option value="gpt-4o-mini">OpenAI GPT 4o-mini</option>
+                <option value="gpt-4o">OpenAI GPT 4o</option>
+                <option value="o1">OpenAI o1</option>
+                <option value="o3-mini">OpenAI o3-mini</option>
+                <option value="DeepSeek-R1">DeepSeek R1</option>
+                <option value="DeepSeek-V3">DeepSeek V3</option>
+                <option value="Llama-3.3-70B-Instruct">Meta Llama 3.3</option>
+                <option value="Llama-3.2-90B-Vision-Instruct">Meta Llama 3.2</option>
+                <option value="Meta-Llama-3.1-405B-Instruct">Meta Llama 3.1</option>
+            </select>
+        </div>
+    </div>
+    
+    <div class="settings-group">
+        <h4>Параметры генерации</h4>
+        <div class="setting-item">
+            <label for="temperature-range">Температура: <span id="temperature-value">0.7</span></label>
+            <div class="range-input">
+                <input type="range" id="temperature-range" min="0" max="1" step="0.1" value="0.7">
+            </div>
+        </div>
+    </div>
+    
+    <div class="settings-group">
+        <h4>Отображение</h4>
+        <div class="setting-item">
+            <label for="theme-select">Тема:</label>
+            <select id="theme-select">
+                <option value="dark">Тёмная</option>
+                <option value="light">Светлая</option>
+                <option value="system">Системная</option>
+            </select>
+        </div>
+    </div>
+    
+    <div class="settings-footer">
+        <button class="apply-settings" id="apply-settings">Применить настройки</button>
+    </div>
+</div>
+
+<div id="chat-history"></div>
+<form id="chat-form">
+    <div class="input-container">
+        <input type="text" name="message" id="message-input" placeholder="Введите сообщение" required>
+        <button type="button" id="mic-button" class="mic-button"><i class="mic-icon">🎙️</i></button>
+    </div>
+    <button type="submit">Отправить</button>
+</form>
+
+<!-- Индикаторы для записи голоса -->
+<div id="recording-indicator" class="recording-indicator">
+    <div class="recording-pulse"></div>
+    <span>Говорите...</span>
+</div>
+
+<!-- Подключаем marked.js для обработки Markdown -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+    // Настраиваем marked.js для правильной обработки LaTeX
+    marked.setOptions({
+        renderer: new marked.Renderer(),
+        highlight: function(code, lang) {
+            return code;
+        },
+        pedantic: false,
+        gfm: true,
+        breaks: true,
+        sanitize: false,
+        smartypants: false,
+        xhtml: false
+    });
+
+    // Получаем элементы настроек
+    const settingsToggle = document.getElementById("settings-toggle");
+    const settingsPanel = document.getElementById("settings-panel");
+    const closeSettings = document.getElementById("close-settings");
+    const applySettings = document.getElementById("apply-settings");
+    const modelSelect = document.getElementById("model-select");
+    const temperatureRange = document.getElementById("temperature-range");
+    const temperatureValue = document.getElementById("temperature-value");
+    const themeSelect = document.getElementById("theme-select");
+
+    // Получаем элементы голосового ввода
+    const micButton = document.getElementById("mic-button");
+    const recordingIndicator = document.getElementById("recording-indicator");
+    const messageInput = document.getElementById("message-input");
+
+    // Настройки по умолчанию
+    let chatSettings = {
+        model: "gpt-4o-mini",
+        temperature: 0.7,
+        theme: "dark"
+    };
+
+    // Загружаем настройки из localStorage при загрузке страницы
+    function loadSettings() {
+        const savedSettings = localStorage.getItem("mathVerifierSettings");
+        if (savedSettings) {
+            chatSettings = JSON.parse(savedSettings);
+            modelSelect.value = chatSettings.model;
+            temperatureRange.value = chatSettings.temperature;
+            temperatureValue.textContent = chatSettings.temperature;
+            themeSelect.value = chatSettings.theme;
+            applyTheme(chatSettings.theme);
+        }
+    }
+
+    // Сохраняем настройки в localStorage
+    function saveSettings() {
+        localStorage.setItem("mathVerifierSettings", JSON.stringify(chatSettings));
+    }
+
+    // Применяем тему
+    function applyTheme(theme) {
+        const root = document.documentElement;
+        if (theme === "light") {
+            root.style.setProperty("--bg-primary", "#f0f0f0");
+            root.style.setProperty("--bg-secondary", "#ffffff");
+            root.style.setProperty("--bg-tertiary", "#e9e9e9");
+            root.style.setProperty("--text-primary", "#333333");
+            root.style.setProperty("--text-secondary", "#666666");
+        } else {
+            root.style.setProperty("--bg-primary", "#121212");
+            root.style.setProperty("--bg-secondary", "#1e1e1e");
+            root.style.setProperty("--bg-tertiary", "#252525");
+            root.style.setProperty("--text-primary", "#ffffff");
+            root.style.setProperty("--text-secondary", "#b0b0b0");
+        }
+    }
+
+    // Функция для отображения/скрытия кнопки микрофона
+    function toggleMicButton() {
+        if (messageInput.value.trim() === '') {
+            micButton.style.display = 'flex';
+        } else {
+            micButton.style.display = 'none';
+        }
+    }
+
+    // Функция для начала записи голоса
+    function startVoiceRecording() {
+        recordingIndicator.classList.add('active');
+        
+        // Вызов API для распознавания речи
+        fetch('/api/speech-to-text', {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            recordingIndicator.classList.remove('active');
+            
+            if (data.status === 'success' && data.text) {
+                messageInput.value = data.text;
+                toggleMicButton();
+                // Автоматически отправляем форму, если была распознана речь
+                document.getElementById('chat-form').dispatchEvent(new Event('submit'));
+            } else {
+                showError('Не удалось распознать речь. Пожалуйста, попробуйте снова.');
+            }
+        })
+        .catch(error => {
+            recordingIndicator.classList.remove('active');
+            showError('Ошибка при записи голоса: ' + error.message);
+        });
+    }
+
+    // Функция для отображения ошибки
+    function showError(message) {
+        appendMessage('bot', 'Math Verifier: Ошибка: ' + message);
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    // Инициализируем обработчики событий для настроек
+    settingsToggle.addEventListener("click", () => {
+        settingsPanel.classList.add("open");
+        settingsToggle.style.display = "none"; // Скрываем кнопку настроек
+    });
+
+    closeSettings.addEventListener("click", () => {
+        settingsPanel.classList.remove("open");
+        settingsToggle.style.display = "flex"; // Показываем кнопку настроек
+    });
+
+    temperatureRange.addEventListener("input", () => {
+        temperatureValue.textContent = temperatureRange.value;
+    });
+
+    applySettings.addEventListener("click", () => {
+        chatSettings.model = modelSelect.value;
+        chatSettings.temperature = parseFloat(temperatureRange.value);
+        chatSettings.theme = themeSelect.value;
+        
+        saveSettings();
+        applyTheme(chatSettings.theme);
+        settingsPanel.classList.remove("open");
+        settingsToggle.style.display = "flex"; // Показываем кнопку настроек
+    });
+
+    // Слушатель для ввода текста (показать/скрыть кнопку микрофона)
+    messageInput.addEventListener('input', toggleMicButton);
+
+    // Слушатель для кнопки микрофона
+    micButton.addEventListener('click', startVoiceRecording);
+
+    // Загружаем настройки при загрузке страницы
+    loadSettings();
+    
+    // Инициализация отображения кнопки микрофона
+    toggleMicButton();
+
+    // Инициализация переменных для синтеза речи
+    let speechSynthesis = window.speechSynthesis;
+    let currentUtterance = null;
+    
+    // Функция для озвучивания текста
+    function speakText(text) {
+        // Остановить текущее озвучивание, если оно есть
+        if (speechSynthesis.speaking) {
+            speechSynthesis.cancel();
+            currentUtterance = null;
+            return;
+        }
+        
+        // Создаем новый экземпляр озвучивания
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'ru-RU';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        
+        // Запоминаем текущее озвучивание для возможности остановки
+        currentUtterance = utterance;
+        
+        // Воспроизводим озвучивание
+        speechSynthesis.speak(utterance);
+    }
+    
+    // Функция для удаления HTML-тегов из текста перед озвучиванием
+    function stripHtml(html) {
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = html;
+        return tempDiv.textContent || tempDiv.innerText || "";
+    }
+    
+    const form = document.getElementById("chat-form");
+    const chatHistory = document.getElementById("chat-history");
+
+    form.addEventListener("submit", async function(e) {
+        e.preventDefault();
+        const userMessage = messageInput.value.trim();
+        if (!userMessage) return;
+
+        // Добавляем сообщение пользователя в чат сразу (экранированный HTML)
+        appendMessage("user", "Вы: " + escapeHtml(userMessage));
+        messageInput.value = "";
+        toggleMicButton(); // Обновляем видимость кнопки микрофона
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+
+        // Отображаем индикатор ожидания
+        const loadingId = showLoading();
+
+        try {
+            // Отправляем JSON-запрос с учетом настроек
+            const response = await fetch("/api/chat", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    messages: [
+                        {
+                            "role": "user",
+                            "content": userMessage
+                        }
+                    ],
+                    model: chatSettings.model,
+                    temperature: chatSettings.temperature,
+                })
+            });
+
+            const data = await response.json();
+            
+            // Скрываем индикатор загрузки
+            hideLoading(loadingId);
+
+            if (response.ok) {
+                // Получаем ответ из правильного поля
+                const botResponse = data.response || data.bot_message || "Не удалось получить ответ";
+                
+                // Преобразуем Markdown-ответ в HTML с сохранением LaTeX
+                const formattedHtml = marked.parse(botResponse);
+                
+                // Добавляем кнопку озвучивания к сообщению бота
+                appendMessage("bot", `<div class="bot-message-content">Math Verifier: ${formattedHtml}</div><button class="speak-button" title="Озвучить сообщение">🔊</button>`);
+                
+                // Добавляем обработчик для новой кнопки озвучивания
+                const speakButtons = document.querySelectorAll('.speak-button');
+                const lastSpeakButton = speakButtons[speakButtons.length - 1];
+                
+                lastSpeakButton.addEventListener('click', function() {
+                    const messageContent = this.previousElementSibling.textContent;
+                    const cleanText = stripHtml(messageContent);
+                    speakText(cleanText);
+                });
+                
+                // Перерисовываем математические формулы после добавления их в DOM
+                if (window.MathJax) {
+                    MathJax.typesetPromise && MathJax.typesetPromise();
+                }
+            } else {
+                throw new Error("Ошибка запроса: " + (data.detail || response.statusText));
+            }
+        } catch (error) {
+            // Скрываем индикатор загрузки в случае ошибки
+            hideLoading(loadingId);
+            console.error("Error:", error);
+            appendMessage("bot", "Math Verifier: Ошибка: " + error);
+        }
+        
+        // Прокручиваем историю чата до конца
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    });
+
+    // Функция для отображения индикатора загрузки
+    function showLoading() {
+        const loadingDiv = document.createElement("div");
+        loadingDiv.classList.add("message", "bot", "loading");
+        loadingDiv.innerHTML = "Math Verifier: Думаю...";
+        chatHistory.appendChild(loadingDiv);
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+        return loadingDiv.id = "loading-" + Date.now();
+    }
+
+    // Функция для скрытия индикатора загрузки
+    function hideLoading(id) {
+        const loadingDiv = document.getElementById(id);
+        if (loadingDiv) {
+            loadingDiv.remove();
+        }
+    }
+
+    // Функция для добавления сообщения в чат
+    function appendMessage(sender, htmlContent) {
+        const msgDiv = document.createElement("div");
+        msgDiv.classList.add("message", sender);
+        msgDiv.innerHTML = htmlContent;
+        chatHistory.appendChild(msgDiv);
+    }
+
+    // Функция экранирования HTML для сообщений пользователя
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
+    }
+</script>
+{% endblock %}
